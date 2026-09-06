@@ -1,0 +1,145 @@
+# Build the TanStack Start SPA and publish it to S3 + CloudFront in ap-south-1.
+#
+# Before the first run:
+# 1. terraform -chdir=terraform apply
+# 2. GitHub repo Settings → Secrets and variables → Actions → Secrets
+#      AWS_ACCESS_KEY_ID     = terraform output -raw github_actions_access_key_id
+#      AWS_SECRET_ACCESS_KEY = terraform output -raw github_actions_secret_access_key
+#    Optional variable (Variables, not Secrets):
+#      VITE_API_BASE_URL     = backend origin, no trailing slash
+#      Leave empty if Terraform api_origin_domain is set (CloudFront proxies /api/*).
+#
+# Names below match terraform/variables.tf defaults (project_name = vibuthar-fe).
+
+name: Deploy to CloudFront
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Git branch to build and deploy to CloudFront
+        required: true
+        type: string
+        default: main
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: deploy-cloudfront-ap-south-1
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  PROJECT_NAME: vibuthar-fe
+  NODE_VERSION: "22"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+
+      - name: Deploying ref
+        run: echo "Deploying $(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse HEAD)"
+
+      - name: Require AWS access key secrets
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "::error::Set repository secrets AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. Values: terraform output -raw github_actions_access_key_id and github_actions_secret_access_key"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve S3 bucket and CloudFront distribution
+        id: infra
+        run: |
+          bucket="$(aws ssm get-parameter --name "/${PROJECT_NAME}/s3_bucket" --query Parameter.Value --output text)"
+          distribution_id="$(aws ssm get-parameter --name "/${PROJECT_NAME}/cloudfront_distribution_id" --query Parameter.Value --output text)"
+          domain="$(aws ssm get-parameter --name "/${PROJECT_NAME}/cloudfront_domain_name" --query Parameter.Value --output text)"
+          echo "bucket=${bucket}" >> "$GITHUB_OUTPUT"
+          echo "distribution_id=${distribution_id}" >> "$GITHUB_OUTPUT"
+          echo "domain=${domain}" >> "$GITHUB_OUTPUT"
+          echo "Publishing to s3://${bucket} (https://${domain})"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+        run: npm run build
+
+      - name: Locate static output
+        id: dist
+        run: |
+          if [ -d dist/client ]; then
+            dir=dist/client
+          elif [ -d .output/public ]; then
+            dir=.output/public
+          elif [ -d dist ]; then
+            dir=dist
+          else
+            echo "::error::No static build output found (looked for dist/client, .output/public, dist)"
+            exit 1
+          fi
+
+          if [ -f "${dir}/_shell.html" ] && [ ! -f "${dir}/index.html" ]; then
+            cp "${dir}/_shell.html" "${dir}/index.html"
+          fi
+
+          if [ ! -f "${dir}/index.html" ]; then
+            echo "::error::Build output ${dir} is missing index.html"
+            exit 1
+          fi
+
+          echo "dir=${dir}" >> "$GITHUB_OUTPUT"
+          echo "Using build output ${dir}"
+
+      - name: Sync assets to S3
+        run: |
+          aws s3 sync "${{ steps.dist.outputs.dir }}" "s3://${{ steps.infra.outputs.bucket }}" \
+            --delete \
+            --cache-control "public,max-age=31536000,immutable"
+
+      - name: Set short cache on HTML and metadata
+        run: |
+          aws s3 sync "${{ steps.dist.outputs.dir }}" "s3://${{ steps.infra.outputs.bucket }}" \
+            --cache-control "public,max-age=0,must-revalidate" \
+            --exclude "*" \
+            --include "*.html" \
+            --include "*.json" \
+            --include "*.txt" \
+            --include "*.xml"
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ steps.infra.outputs.distribution_id }}" \
+            --paths "/*"
+
+      - name: Site URL
+        run: echo "https://${{ steps.infra.outputs.domain }}"

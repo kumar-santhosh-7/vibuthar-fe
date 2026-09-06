@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars (gitignored). Do not commit real secrets.
+
+aws_region   = "ap-south-1"
+project_name = "vibuthar-fe"
+
+# Optional: proxy /api/* through CloudFront to the ECS ALB (same-origin for the SPA).
+# api_origin_domain            = "vibuthar-xxxxx.ap-south-1.elb.amazonaws.com"
+# api_origin_protocol_policy   = "http-only"
+
+# Optional custom domain. Certificate must be in us-east-1.
+# domain_name          = "www.example.com"
+# acm_certificate_arn  = "arn:aws:acm:us-east-1:123456789012:certificate/..."

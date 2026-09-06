@@ -9,7 +9,14 @@ const apiProxyTarget = process.env["VITE_API_BASE_URL"] || "http://localhost:808
 export default defineConfig({
   plugins: [
     tailwindcss(),
-    tanstackStart(),
+    tanstackStart({
+      spa: {
+        enabled: true,
+        prerender: {
+          outputPath: "/index.html",
+        },
+      },
+    }),
     react(),
     tsconfigPaths(),
   ],
