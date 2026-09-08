@@ -9,6 +9,22 @@ import { cn } from "@/lib/utils";
  * preview and the large course cards without per-placement overrides.
  */
 export function CourseThumbnail({ course, className }: { course: Course; className?: string }) {
+  if (course.hasThumbnail) {
+    return (
+      <div className={cn("@container relative h-full w-full overflow-hidden bg-secondary", className)}>
+        <img
+          src={course.image}
+          alt=""
+          loading="lazy"
+          draggable={false}
+          width={1200}
+          height={800}
+          className="h-full w-full object-cover"
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(

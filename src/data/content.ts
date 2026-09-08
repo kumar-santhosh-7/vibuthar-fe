@@ -24,6 +24,8 @@ export type Course = {
   /** Short all-caps promise printed on the course thumbnail. */
   tagline: string;
   image: string;
+  /** When true, show the uploaded photo without the branded colour overlay. */
+  hasThumbnail?: boolean;
 };
 
 export const courses: Course[] = [

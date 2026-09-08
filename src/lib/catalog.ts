@@ -4,6 +4,7 @@ import type { Course } from "@/data/content";
 import {
   createAdminCourse,
   listAdminCourses,
+  resolveApiMediaUrl,
   type AdminCourse,
   type CreateAdminCourseInput,
 } from "@/lib/api";
@@ -17,6 +18,7 @@ function isActive(course: AdminCourse) {
 
 export function toUiCourse(course: AdminCourse): Course {
   const hours = course.durationHours;
+  const thumbnail = resolveApiMediaUrl(course.thumbnailUrl);
   return {
     id: course.id,
     title: course.title,
@@ -29,7 +31,8 @@ export function toUiCourse(course: AdminCourse): Course {
     blurb: course.description,
     blurbTa: course.description,
     tagline: course.status || course.title,
-    image: course.thumbnailUrl || fallbackImage,
+    image: thumbnail || fallbackImage,
+    ...(thumbnail ? { hasThumbnail: true } : {}),
   };
 }
 

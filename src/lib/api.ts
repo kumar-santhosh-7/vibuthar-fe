@@ -264,13 +264,7 @@ function pickCourse(raw: unknown): AdminCourse | null {
     ),
     price: pickNumber(course["price"], course["fee"], course["amount"]),
     status: pickString(course["status"]) || "ACTIVE",
-    thumbnailUrl: pickString(
-      course["thumbnailUrl"],
-      course["thumbnail_url"],
-      course["thumbnail"],
-      course["imageUrl"],
-      course["image"],
-    ),
+    thumbnailUrl: mediaUrl(pickString(course["thumbnailUrl"], rec["thumbnailUrl"])),
   };
 }
 
@@ -308,6 +302,10 @@ function mediaUrl(path: string) {
   const base = apiBaseUrl();
   const normalized = path.startsWith("/") ? path : `/${path}`;
   return base ? `${base}${normalized}` : normalized;
+}
+
+export function resolveApiMediaUrl(path: string) {
+  return mediaUrl(path);
 }
 
 function pickImage(raw: unknown): AdminImage | null {
@@ -366,20 +364,27 @@ async function request(path: string, init: RequestInit, fallbackError: string) {
   return body;
 }
 
-async function sendFile(path: string, method: "POST" | "PUT", file: File, fallbackError: string) {
-  const form = new FormData();
-  form.append("file", file, file.name);
-
+async function sendForm(path: string, method: "POST" | "PUT" | "PATCH", form: FormData, fallbackError: string) {
   const token = typeof window === "undefined" ? null : readAuthToken();
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  const res = await fetch(apiUrl(path), { method, cache: "no-store", headers, body: form });
+  const res = await fetch(apiUrl(path), {
+    method,
+    body: form,
+    headers,
+  });
   const payload = await readBody(res);
   if (!res.ok) {
     throw new ApiError(errorMessage(payload, fallbackError), res.status);
   }
   return payload;
+}
+
+async function sendFile(path: string, method: "POST" | "PUT", file: File, fallbackError: string) {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  return sendForm(path, method, form, fallbackError);
 }
 
 async function postJson(path: string, payload: unknown, fallbackError: string) {
@@ -394,11 +399,11 @@ async function postJson(path: string, payload: unknown, fallbackError: string) {
   );
 }
 
-async function putJson(path: string, payload: unknown, fallbackError: string) {
+async function patchJson(path: string, payload: unknown, fallbackError: string) {
   return request(
     path,
     {
-      method: "PUT",
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
@@ -464,7 +469,7 @@ export type CreateAdminCourseInput = {
   durationHours: number;
   price: number;
   status: string;
-  thumbnailUrl: string;
+  thumbnail: File;
 };
 
 export type CreateAdminSubscriptionInput = {
@@ -478,6 +483,7 @@ export type CreateAdminSubscriptionInput = {
 
 export type UpdateAdminSubscriptionPaymentInput = {
   subscriptionId: string;
+  studentId: string;
   paymentType: PaymentType;
   paymentStatus: PaymentStatus;
   amount: number;
@@ -745,6 +751,38 @@ export async function resetPassword(phone: string, newPassword: string) {
   );
 }
 
+export async function listAdminSubscriptionStats() {
+  const body = await request(
+    "/api/admin/subscriptions/stats",
+    { method: "GET" },
+    "Could not load subscription stats.",
+  );
+  const root = asRecord(body);
+  const data = asRecord(root?.["data"]) ?? root ?? {};
+  return {
+    courseCount: pickNumber(data["courseCount"], data["course_count"]),
+    subscribedMemberCount: pickNumber(
+      data["subscribedMemberCount"],
+      data["subscribed_member_count"],
+    ),
+    unsubscribedMemberCount: pickNumber(
+      data["unsubscribedMemberCount"],
+      data["unsubscribed_member_count"],
+    ),
+  };
+}
+
+export async function listAdminPaidAmount() {
+  const body = await request(
+    "/api/admin/subscriptions/paid-amount",
+    { method: "GET" },
+    "Could not load paid amount.",
+  );
+  const root = asRecord(body);
+  const data = asRecord(root?.["data"]) ?? root ?? {};
+  return pickNumber(data["totalPaidAmount"], data["total_paid_amount"]);
+}
+
 export async function listAdminMembers(kind: MemberListKind) {
   const path =
     kind === "subscribed" ? "/api/admin/members/subscribed" : "/api/admin/members/non-subscribed";
@@ -762,15 +800,18 @@ export async function listAdminCourses() {
 }
 
 export async function createAdminCourse(input: CreateAdminCourseInput) {
-  const payload = {
-    title: input.title,
-    description: input.description,
-    durationHours: input.durationHours,
-    price: input.price,
-    status: input.status,
-    thumbnailUrl: input.thumbnailUrl,
-  };
-  const body = await postJson("/api/admin/courses", payload, "Could not create this course.");
+  const form = new FormData();
+  form.append("title", input.title);
+  form.append("description", input.description);
+  form.append("durationHours", String(input.durationHours));
+  form.append("price", input.price.toFixed(2));
+  form.append("status", input.status);
+  const thumbnail =
+    input.thumbnail.type
+      ? input.thumbnail
+      : new File([input.thumbnail], input.thumbnail.name, { type: "image/jpeg" });
+  form.append("thumbnail", thumbnail, thumbnail.name);
+  const body = await sendForm("/api/admin/courses", "POST", form, "Could not create this course.");
   const rec = asRecord(body);
   const nested = rec ? (asRecord(rec["data"]) ?? rec) : body;
   return (
@@ -782,7 +823,7 @@ export async function createAdminCourse(input: CreateAdminCourseInput) {
       durationHours: input.durationHours,
       price: input.price,
       status: input.status,
-      thumbnailUrl: input.thumbnailUrl,
+      thumbnailUrl: mediaUrl(pickString(asRecord(nested)?.["thumbnailUrl"])),
     }
   );
 }
@@ -803,12 +844,13 @@ export async function createAdminSubscription(input: CreateAdminSubscriptionInpu
 }
 
 export async function updateAdminSubscriptionPayment(input: UpdateAdminSubscriptionPaymentInput) {
-  return putJson(
+  return patchJson(
     `/api/admin/subscriptions/${encodeURIComponent(input.subscriptionId)}/payment`,
     {
+      studentId: input.studentId,
       paymentType: input.paymentType,
-      amount: input.amount,
       paymentStatus: input.paymentStatus,
+      amount: input.amount,
     },
     "Could not update this payment.",
   );

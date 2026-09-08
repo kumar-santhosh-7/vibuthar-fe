@@ -1,10 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Image as ImageIcon, BarChart3, BookOpen, ChevronLeft, ChevronRight, Eye, ImagePlus, Pencil, Plus, Trash2, Users, Video, X } from "lucide-react";
-import { BANNER_IMAGE, assertBannerFile } from "@/lib/banner-image";
+import { BANNER_IMAGE, COURSE_THUMBNAIL, assertBannerFile, assertCourseThumbnailFile } from "@/lib/banner-image";
 import { addCourse, useCourses } from "@/lib/catalog";
-import { formatPrice, useUsers } from "@/lib/directory";
-import { createAdminCourseVideo, createAdminSubscription, deleteAdminImage, listAdminMembers, listPublicImages, registerAccount, updateAdminImage, updateAdminSubscriptionPayment, uploadAdminImage, type AdminCourse, type AdminImage, type AdminMember, type MemberListKind, type PaymentStatus, type PaymentType } from "@/lib/api";
+import { formatPrice } from "@/lib/directory";
+import { createAdminCourseVideo, createAdminSubscription, deleteAdminImage, listAdminMembers, listAdminPaidAmount, listAdminSubscriptionStats, listPublicImages, registerAccount, updateAdminImage, updateAdminSubscriptionPayment, uploadAdminImage, type AdminCourse, type AdminImage, type AdminMember, type MemberListKind, type PaymentStatus, type PaymentType } from "@/lib/api";
 import { homeFor, isValidPhone, normalizePhone, useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -242,72 +242,81 @@ function AdminModal({
 }
 
 function AnalyticsPanel() {
-  const users = useUsers();
-  const { courses } = useCourses({ includeInactive: true });
-  const students = users.filter((u) => u.role === "student");
-  const allPaid = students.reduce(
-    (sum, user) => sum + user.enrollments.reduce((n, e) => n + e.paid, 0),
-    0,
-  );
-  const unassigned = students.filter((u) => u.enrollments.length === 0).length;
+  const [courseCount, setCourseCount] = useState(0);
+  const [subscribedMemberCount, setSubscribedMemberCount] = useState(0);
+  const [unsubscribedMemberCount, setUnsubscribedMemberCount] = useState(0);
+  const [totalPaidAmount, setTotalPaidAmount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const byCourse = courses.map((course) => {
-    const enrolled = students.filter((u) => u.enrollments.some((e) => e.courseId === course.id));
-    const collected = enrolled.reduce((sum, user) => {
-      const row = user.enrollments.find((e) => e.courseId === course.id);
-      return sum + (row?.paid ?? 0);
-    }, 0);
-    return { course, count: enrolled.length, collected };
-  });
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([listAdminSubscriptionStats(), listAdminPaidAmount()])
+      .then(([stats, paid]) => {
+        if (cancelled) return;
+        setCourseCount(stats.courseCount);
+        setSubscribedMemberCount(stats.subscribedMemberCount);
+        setUnsubscribedMemberCount(stats.unsubscribedMemberCount);
+        setTotalPaidAmount(paid);
+        setError("");
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not load analytics.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div>
       <h2 className="text-2xl">Analytics</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        How many users you have, and how they sit across each course.
+        Courses and members from live subscription stats.
       </p>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-3">
+      {error ? <p className="mt-4 text-sm text-destructive">{error}</p> : null}
+
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-3xl border border-border bg-card p-6 shadow-soft">
           <p className="text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">
-            Total users
+            Courses
           </p>
-          <p className="mt-3 font-serif text-4xl text-chocolate">{users.length}</p>
-          <p className="mt-1 text-sm text-muted-foreground">{students.length} students</p>
+          <p className="mt-3 font-serif text-4xl text-chocolate">{loading ? "—" : courseCount}</p>
+          <p className="mt-1 text-sm text-muted-foreground">Active programmes</p>
+        </div>
+        <div className="rounded-3xl border border-border bg-card p-6 shadow-soft">
+          <p className="text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">
+            Subscribed members
+          </p>
+          <p className="mt-3 font-serif text-4xl text-chocolate">
+            {loading ? "—" : subscribedMemberCount}
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">Students with a course</p>
+        </div>
+        <div className="rounded-3xl border border-border bg-card p-6 shadow-soft">
+          <p className="text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">
+            Unsubscribed members
+          </p>
+          <p className="mt-3 font-serif text-4xl text-chocolate">
+            {loading ? "—" : unsubscribedMemberCount}
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">Students with no course</p>
         </div>
         <div className="rounded-3xl border border-border bg-card p-6 shadow-soft">
           <p className="text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">
             Fees collected
           </p>
-          <p className="mt-3 font-serif text-4xl text-chocolate">{formatPrice(allPaid)}</p>
-          <p className="mt-1 text-sm text-muted-foreground">Across all enrolments</p>
-        </div>
-        <div className="rounded-3xl border border-border bg-card p-6 shadow-soft">
-          <p className="text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">
-            No course yet
+          <p className="mt-3 font-serif text-4xl text-chocolate">
+            {loading ? "—" : formatPrice(totalPaidAmount)}
           </p>
-          <p className="mt-3 font-serif text-4xl text-chocolate">{unassigned}</p>
-          <p className="mt-1 text-sm text-muted-foreground">Students with no enrolment</p>
+          <p className="mt-1 text-sm text-muted-foreground">Total paid amount</p>
         </div>
-      </div>
-
-      <h3 className="mt-10 text-xl">Users by course</h3>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        {byCourse.map(({ course, count, collected }) => (
-          <article key={course.id} className="rounded-3xl border border-border bg-card p-5 shadow-soft">
-            <p className="text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">
-              {course.track}
-            </p>
-            <h4 className="mt-2 text-lg leading-snug">{course.title}</h4>
-            <div className="mt-4 flex items-end justify-between gap-3">
-              <div>
-                <p className="font-serif text-3xl text-chocolate">{count}</p>
-                <p className="text-sm text-muted-foreground">{count === 1 ? "user" : "users"}</p>
-              </div>
-              <p className="text-sm font-semibold">{formatPrice(collected)}</p>
-            </div>
-          </article>
-        ))}
       </div>
     </div>
   );
@@ -511,6 +520,7 @@ function UserPanel() {
     try {
       await updateAdminSubscriptionPayment({
         subscriptionId,
+        studentId: updating.studentId,
         paymentType,
         paymentStatus,
         amount: Number(paidAmount.toFixed(2)),
@@ -1022,7 +1032,8 @@ function CoursePanel() {
   const [durationHours, setDurationHours] = useState("");
   const [price, setPrice] = useState("");
   const [status, setStatus] = useState("ACTIVE");
-  const [thumbnailUrl, setThumbnailUrl] = useState("");
+  const [thumbnail, setThumbnail] = useState<File | null>(null);
+  const [thumbnailPreview, setThumbnailPreview] = useState("");
   const [error, setError] = useState("");
   const [videoCourse, setVideoCourse] = useState<AdminCourse | null>(null);
   const [videoTitle, setVideoTitle] = useState("");
@@ -1038,7 +1049,9 @@ function CoursePanel() {
     setDurationHours("");
     setPrice("");
     setStatus("ACTIVE");
-    setThumbnailUrl("");
+    if (thumbnailPreview.startsWith("blob:")) URL.revokeObjectURL(thumbnailPreview);
+    setThumbnail(null);
+    setThumbnailPreview("");
     setError("");
   }
 
@@ -1117,8 +1130,10 @@ function CoursePanel() {
       setError("Add duration in hours and a price.");
       return;
     }
-    if (!thumbnailUrl.trim()) {
-      setError("Add a thumbnail URL.");
+    if (!thumbnail) {
+      setError(
+        `Upload a ${COURSE_THUMBNAIL.width}×${COURSE_THUMBNAIL.height} thumbnail — the same size as the course cards.`,
+      );
       return;
     }
     setError("");
@@ -1130,7 +1145,7 @@ function CoursePanel() {
         durationHours: hours,
         price: Number(amount.toFixed(2)),
         status,
-        thumbnailUrl: thumbnailUrl.trim(),
+        thumbnail,
       });
       toast.success("Course saved successfully.");
       resetForm();
@@ -1309,18 +1324,47 @@ function CoursePanel() {
               <option value="INACTIVE">Inactive</option>
             </select>
           </label>
-          <label className="block text-sm font-medium sm:col-span-2">
-            Thumbnail URL
+          <div className="sm:col-span-2">
+            <label className="block text-sm font-medium" htmlFor="course-thumbnail">
+              Thumbnail
+            </label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Must be {COURSE_THUMBNAIL.width}×{COURSE_THUMBNAIL.height} px (16:10) — JPG, PNG or WebP,
+              under {(COURSE_THUMBNAIL.maxBytes / (1024 * 1024)).toFixed(0)} MB.
+            </p>
             <input
-              value={thumbnailUrl}
-              onChange={(e) => setThumbnailUrl(e.target.value)}
-              className={cn(fieldClass, "mt-2")}
-              placeholder="https://example.com/thumb.jpg"
+              id="course-thumbnail"
+              name="thumbnail"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(e) => {
+                const next = e.target.files?.[0];
+                e.target.value = "";
+                void (async () => {
+                  if (thumbnailPreview.startsWith("blob:")) URL.revokeObjectURL(thumbnailPreview);
+                  if (!next) {
+                    setThumbnail(null);
+                    setThumbnailPreview("");
+                    return;
+                  }
+                  try {
+                    const valid = await assertCourseThumbnailFile(next);
+                    setThumbnail(valid);
+                    setThumbnailPreview(URL.createObjectURL(valid));
+                    setError("");
+                  } catch (err) {
+                    setThumbnail(null);
+                    setThumbnailPreview("");
+                    setError(err instanceof Error ? err.message : "This image cannot be used.");
+                  }
+                })();
+              }}
+              className="mt-2 w-full rounded-full border border-border bg-background px-4 py-3 text-sm file:mr-3 file:rounded-full file:border-0 file:bg-secondary file:px-4 file:py-1.5 file:text-sm file:font-semibold"
             />
-          </label>
-          {thumbnailUrl.trim() ? (
+          </div>
+          {thumbnailPreview ? (
             <img
-              src={thumbnailUrl.trim()}
+              src={thumbnailPreview}
               alt=""
               className="aspect-16/10 w-full rounded-2xl object-cover sm:col-span-2"
             />
