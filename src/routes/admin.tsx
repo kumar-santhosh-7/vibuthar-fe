@@ -1,10 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Image as ImageIcon, BarChart3, BookOpen, ChevronLeft, ChevronRight, Eye, ImagePlus, Plus, Trash2, Users, Video, X } from "lucide-react";
+import { Image as ImageIcon, BarChart3, BookOpen, ChevronLeft, ChevronRight, Eye, ImagePlus, Pencil, Plus, Trash2, Users, Video, X } from "lucide-react";
 import { BANNER_IMAGE, assertBannerFile } from "@/lib/banner-image";
 import { addCourse, useCourses } from "@/lib/catalog";
 import { formatPrice, useUsers } from "@/lib/directory";
-import { createAdminCourseVideo, createAdminSubscription, deleteAdminImage, listAdminMembers, listPublicImages, registerAccount, updateAdminImage, uploadAdminImage, type AdminCourse, type AdminImage, type AdminMember, type MemberListKind } from "@/lib/api";
+import { createAdminCourseVideo, createAdminSubscription, deleteAdminImage, listAdminMembers, listPublicImages, registerAccount, updateAdminImage, updateAdminSubscriptionPayment, uploadAdminImage, type AdminCourse, type AdminImage, type AdminMember, type MemberListKind, type PaymentStatus, type PaymentType } from "@/lib/api";
 import { homeFor, isValidPhone, normalizePhone, useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -313,17 +313,6 @@ function AnalyticsPanel() {
   );
 }
 
-function formatMemberDate(value: string) {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
 function toExpiresAt(value: string) {
   if (!value) return "";
   return value.length === 16 ? `${value}:59` : value;
@@ -334,6 +323,22 @@ function memberCoursesLabel(user: AdminMember) {
   return titles.length ? titles.join(", ") : "—";
 }
 
+function paymentStatusLabel(status: PaymentStatus | string | undefined) {
+  if (status === "PAID") return "Paid";
+  if (status === "PARTIAL") return "Partial";
+  if (status === "NOT_PAID") return "Un-paid";
+  return "—";
+}
+
+function memberPaymentStatuses(user: AdminMember) {
+  const fromEnrollments = user.enrollments
+    .map((row) => row.paymentStatus)
+    .filter((status): status is PaymentStatus => Boolean(status));
+  if (fromEnrollments.length) return [...new Set(fromEnrollments)];
+  if (user.enrollments.some((row) => row.paid > 0)) return ["PAID" as const];
+  return [];
+}
+
 function UserPanel() {
   const [tab, setTab] = useState<MemberListKind>("subscribed");
   const [subscribed, setSubscribed] = useState<AdminMember[]>([]);
@@ -342,7 +347,7 @@ function UserPanel() {
   const [loadError, setLoadError] = useState("");
   const members = tab === "subscribed" ? subscribed : unsubscribed;
   const { page, setPage, pageCount, slice, from, to, total } = usePaged(members);
-  const { courses, raw: adminCourses } = useCourses({ includeInactive: true });
+  const { raw: adminCourses } = useCourses({ includeInactive: true });
   const assignableCourses = adminCourses.filter((course) => {
     const status = course.status.trim().toUpperCase();
     return !status || status === "ACTIVE";
@@ -350,10 +355,12 @@ function UserPanel() {
   const [open, setOpen] = useState(false);
   const [viewing, setViewing] = useState<AdminMember | null>(null);
   const [subscribing, setSubscribing] = useState<AdminMember | null>(null);
+  const [updating, setUpdating] = useState<AdminMember | null>(null);
+  const [subscriptionId, setSubscriptionId] = useState("");
   const [courseId, setCourseId] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
-  const [paymentType, setPaymentType] = useState<"UPI" | "CASH">("CASH");
-  const [paymentStatus, setPaymentStatus] = useState<"PAID" | "NOT_PAID" | "PARTIAL">("NOT_PAID");
+  const [paymentType, setPaymentType] = useState<PaymentType>("CASH");
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>("NOT_PAID");
   const [amount, setAmount] = useState("");
   const [subError, setSubError] = useState("");
   const [subPending, setSubPending] = useState(false);
@@ -404,6 +411,16 @@ function UserPanel() {
     setError("");
   }
 
+  function applyEnrollmentPayment(enrollment: AdminMember["enrollments"][number] | undefined) {
+    setPaymentType(enrollment?.paymentType ?? "UPI");
+    setPaymentStatus(enrollment?.paymentStatus ?? "NOT_PAID");
+    const nextAmount =
+      enrollment && enrollment.paid > 0
+        ? enrollment.paid
+        : enrollment?.remainingAmount ?? enrollment?.coursePrice;
+    setAmount(nextAmount !== undefined && Number.isFinite(nextAmount) ? String(nextAmount) : "");
+  }
+
   function openSubscribe(user: AdminMember) {
     const firstCourse = assignableCourses[0];
     setSubscribing(user);
@@ -420,6 +437,24 @@ function UserPanel() {
     setCourseId("");
     setExpiresAt("");
     setPaymentType("CASH");
+    setPaymentStatus("NOT_PAID");
+    setAmount("");
+    setSubError("");
+    setSubPending(false);
+  }
+
+  function openUpdatePayment(user: AdminMember) {
+    const first = user.enrollments.find((row) => row.subscriptionId) ?? user.enrollments[0];
+    setUpdating(user);
+    setSubscriptionId(first?.subscriptionId ?? "");
+    applyEnrollmentPayment(first);
+    setSubError("");
+  }
+
+  function closeUpdatePayment() {
+    setUpdating(null);
+    setSubscriptionId("");
+    setPaymentType("UPI");
     setPaymentStatus("NOT_PAID");
     setAmount("");
     setSubError("");
@@ -454,6 +489,37 @@ function UserPanel() {
       await loadMembers({ silent: true });
     } catch (err) {
       setSubError(err instanceof Error ? err.message : "Could not add this subscription.");
+    } finally {
+      setSubPending(false);
+    }
+  }
+
+  async function onUpdatePayment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!updating) return;
+    if (!subscriptionId) {
+      setSubError("This member has no subscription id, so payment cannot be updated.");
+      return;
+    }
+    const paidAmount = Number(amount);
+    if (!Number.isFinite(paidAmount) || paidAmount < 0) {
+      setSubError("Enter a valid amount.");
+      return;
+    }
+    setSubError("");
+    setSubPending(true);
+    try {
+      await updateAdminSubscriptionPayment({
+        subscriptionId,
+        paymentType,
+        paymentStatus,
+        amount: Number(paidAmount.toFixed(2)),
+      });
+      toast.success("Payment updated successfully.");
+      closeUpdatePayment();
+      await loadMembers({ silent: true });
+    } catch (err) {
+      setSubError(err instanceof Error ? err.message : "Could not update this payment.");
     } finally {
       setSubPending(false);
     }
@@ -554,29 +620,33 @@ function UserPanel() {
               <th className="px-6 py-3 font-semibold">Name</th>
               <th className="px-6 py-3 font-semibold">Mobile</th>
               <th className="px-6 py-3 font-semibold">Role</th>
-              <th className="px-6 py-3 font-semibold">Added</th>
               {tab === "non-subscribed" ? (
                 <th className="px-6 py-3 font-semibold">Course</th>
-              ) : null}
+              ) : (
+                <>
+                  <th className="px-6 py-3 font-semibold">Payment</th>
+                  <th className="px-6 py-3 font-semibold">Action</th>
+                </>
+              )}
               <th className="px-6 py-3 font-semibold">View</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {loading ? (
               <tr>
-                <td colSpan={tab === "non-subscribed" ? 6 : 5} className="px-6 py-10 text-center text-muted-foreground">
+                <td colSpan={tab === "non-subscribed" ? 5 : 6} className="px-6 py-10 text-center text-muted-foreground">
                   Loading members…
                 </td>
               </tr>
             ) : loadError ? (
               <tr>
-                <td colSpan={tab === "non-subscribed" ? 6 : 5} className="px-6 py-10 text-center text-destructive">
+                <td colSpan={tab === "non-subscribed" ? 5 : 6} className="px-6 py-10 text-center text-destructive">
                   {loadError}
                 </td>
               </tr>
             ) : slice.length === 0 ? (
               <tr>
-                <td colSpan={tab === "non-subscribed" ? 6 : 5} className="px-6 py-10 text-center text-muted-foreground">
+                <td colSpan={tab === "non-subscribed" ? 5 : 6} className="px-6 py-10 text-center text-muted-foreground">
                   {tab === "subscribed"
                     ? "No subscribed users yet."
                     : "No non-subscribed users yet."}
@@ -592,7 +662,6 @@ function UserPanel() {
                       {user.role}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-muted-foreground">{formatMemberDate(user.createdAt)}</td>
                   {tab === "non-subscribed" ? (
                     <td className="px-6 py-4">
                       <div className="flex flex-wrap items-center gap-2">
@@ -606,7 +675,35 @@ function UserPanel() {
                         </button>
                       </div>
                     </td>
-                  ) : null}
+                  ) : (
+                    <>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-wrap gap-1.5">
+                          {memberPaymentStatuses(user).length ? (
+                            memberPaymentStatuses(user).map((status) => (
+                              <span
+                                key={status}
+                                className="rounded-full bg-secondary px-3 py-1 text-xs font-semibold tracking-wide"
+                              >
+                                {paymentStatusLabel(status)}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <button
+                          type="button"
+                          onClick={() => openUpdatePayment(user)}
+                          className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-chocolate transition-colors hover:bg-secondary"
+                        >
+                          <Pencil className="h-3.5 w-3.5" /> Update payment
+                        </button>
+                      </td>
+                    </>
+                  )}
                   <td className="px-6 py-4">
                     <button
                       type="button"
@@ -733,7 +830,7 @@ function UserPanel() {
               Payment type
               <select
                 value={paymentType}
-                onChange={(e) => setPaymentType(e.target.value as "UPI" | "CASH")}
+                onChange={(e) => setPaymentType(e.target.value as PaymentType)}
                 className={cn(fieldClass, "mt-2")}
               >
                 <option value="UPI">UPI</option>
@@ -744,7 +841,7 @@ function UserPanel() {
               Payment status
               <select
                 value={paymentStatus}
-                onChange={(e) => setPaymentStatus(e.target.value as "PAID" | "NOT_PAID" | "PARTIAL")}
+                onChange={(e) => setPaymentStatus(e.target.value as PaymentStatus)}
                 className={cn(fieldClass, "mt-2")}
               >
                 <option value="PAID">Paid</option>
@@ -789,6 +886,60 @@ function UserPanel() {
       </AdminModal>
 
       <AdminModal
+        open={Boolean(updating)}
+        title="Update payment"
+        onClose={closeUpdatePayment}
+      >
+        {updating && (
+          <form onSubmit={(e) => void onUpdatePayment(e)} className="grid gap-4">
+            <label className="block text-sm font-medium">
+              Payment type
+              <select
+                value={paymentType}
+                onChange={(e) => setPaymentType(e.target.value as PaymentType)}
+                className={cn(fieldClass, "mt-2")}
+              >
+                <option value="UPI">UPI</option>
+                <option value="CASH">Cash</option>
+              </select>
+            </label>
+            <label className="block text-sm font-medium">
+              Amount
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className={cn(fieldClass, "mt-2")}
+                placeholder="5000"
+              />
+            </label>
+            <label className="block text-sm font-medium">
+              Payment status
+              <select
+                value={paymentStatus}
+                onChange={(e) => setPaymentStatus(e.target.value as PaymentStatus)}
+                className={cn(fieldClass, "mt-2")}
+              >
+                <option value="PAID">Paid</option>
+                <option value="NOT_PAID">Un-paid</option>
+                <option value="PARTIAL">Partial</option>
+              </select>
+            </label>
+            {subError && <p className="text-sm text-destructive">{subError}</p>}
+            <button
+              type="submit"
+              disabled={subPending || !subscriptionId}
+              className="mt-1 inline-flex items-center justify-center gap-2 rounded-full bg-gold-gradient px-5 py-3 text-sm font-semibold text-primary-foreground shadow-gold disabled:pointer-events-none disabled:opacity-60"
+            >
+              {subPending ? "Saving…" : "Update payment"}
+            </button>
+          </form>
+        )}
+      </AdminModal>
+
+      <AdminModal
         open={Boolean(viewing)}
         title={viewing ? viewing.name : "User courses"}
         onClose={() => setViewing(null)}
@@ -796,53 +947,62 @@ function UserPanel() {
         {viewing && (
           <div>
             <p className="text-sm text-muted-foreground">{viewing.phone}</p>
-            {viewing.enrollments.filter((e) => e.paid > 0).length === 0 ? (
+            {viewing.email ? <p className="mt-1 text-sm text-muted-foreground">{viewing.email}</p> : null}
+            {viewing.studentId ? (
+              <p className="mt-1 text-xs text-muted-foreground">{viewing.studentId}</p>
+            ) : null}
+            {viewing.enrollments.length === 0 ? (
               <p className="mt-6 text-sm text-muted-foreground">
                 {tab === "subscribed"
-                  ? "This member is subscribed. Course fee details were not returned by the server."
+                  ? "This member is subscribed. Course details were not returned by the server."
                   : "This user has not paid for a course yet."}
               </p>
             ) : (
-              <div className="mt-4">
-                <span className="rounded-full bg-secondary px-3 py-1 text-xs font-semibold tracking-wide uppercase">
-                  Already paid
-                </span>
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead className="border-b border-border text-xs tracking-[0.12em] text-muted-foreground uppercase">
-                      <tr>
-                        <th className="py-2 pr-4 font-semibold">Course</th>
-                        <th className="py-2 font-semibold">Paid amount</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {viewing.enrollments
-                        .filter((row) => row.paid > 0)
-                        .map((row) => {
-                          const course = courses.find((c) => c.id === row.courseId);
-                          return (
-                            <tr key={row.courseId}>
-                              <td className="py-3 pr-4">
-                                <p className="font-semibold text-chocolate">
-                                  {course?.title ?? row.title}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  {course?.shortTitle ?? row.shortTitle}
-                                </p>
-                              </td>
-                              <td className="py-3 font-semibold">{formatPrice(row.paid)}</td>
-                            </tr>
-                          );
-                        })}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="mt-4 text-sm font-semibold text-chocolate">
-                  Total paid{" "}
-                  {formatPrice(
-                    viewing.enrollments.filter((row) => row.paid > 0).reduce((sum, row) => sum + row.paid, 0),
-                  )}
-                </p>
+              <div className="mt-5 space-y-4">
+                {viewing.enrollments.map((row) => (
+                    <article
+                      key={row.subscriptionId || row.courseId}
+                      className="rounded-2xl border border-border bg-background p-4"
+                    >
+                      <p className="font-semibold text-chocolate">{row.title}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{row.courseId}</p>
+                      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                        <div>
+                          <dt className="text-xs text-muted-foreground">Payment status</dt>
+                          <dd className="font-medium">{paymentStatusLabel(row.paymentStatus)}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-muted-foreground">Payment type</dt>
+                          <dd className="font-medium">
+                            {row.paymentType === "UPI" ? "UPI" : row.paymentType === "CASH" ? "Cash" : "—"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-muted-foreground">Amount paid</dt>
+                          <dd className="font-medium">{formatPrice(row.paid)}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-muted-foreground">Course price</dt>
+                          <dd className="font-medium">
+                            {row.coursePrice !== undefined ? formatPrice(row.coursePrice) : "—"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-muted-foreground">Remaining</dt>
+                          <dd className="font-medium">
+                            {row.remainingAmount !== undefined ? formatPrice(row.remainingAmount) : "—"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-muted-foreground">Subscription</dt>
+                          <dd className="font-medium">
+                            {row.subscriptionId ?? "—"}
+                            {row.subscriptionStatus ? ` · ${row.subscriptionStatus}` : ""}
+                          </dd>
+                        </div>
+                      </dl>
+                    </article>
+                ))}
               </div>
             )}
           </div>

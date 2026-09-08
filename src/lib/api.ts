@@ -119,15 +119,33 @@ function pickCreatedAt(rec: Record<string, unknown>) {
   return "";
 }
 
+function pickPaymentType(...values: unknown[]): PaymentType | "" {
+  const raw = pickString(...values).toUpperCase().replace(/[-\s]/g, "_");
+  if (raw === "UPI") return "UPI";
+  if (raw === "CASH") return "CASH";
+  return "";
+}
+
+function pickPaymentStatus(...values: unknown[]): PaymentStatus | "" {
+  const raw = pickString(...values).toUpperCase().replace(/[-\s]/g, "_");
+  if (raw === "PAID") return "PAID";
+  if (raw === "PARTIAL") return "PARTIAL";
+  if (raw === "NOT_PAID" || raw === "UNPAID" || raw === "UN_PAID") return "NOT_PAID";
+  return "";
+}
+
 function pickEnrollments(rec: Record<string, unknown>): AdminMemberEnrollment[] {
-  const lists = [
-    rec["enrollments"],
-    rec["courses"],
-    rec["subscriptions"],
-    rec["subscribedCourses"],
-    rec["paidCourses"],
-    rec["coursePayments"],
-  ];
+  const subscriptions = rec["subscriptions"];
+  const lists =
+    Array.isArray(subscriptions) && subscriptions.length > 0
+      ? [subscriptions]
+      : [
+          rec["enrollments"],
+          rec["courses"],
+          rec["subscribedCourses"],
+          rec["paidCourses"],
+          rec["coursePayments"],
+        ];
   const out: AdminMemberEnrollment[] = [];
   for (const list of lists) {
     if (!Array.isArray(list)) continue;
@@ -140,15 +158,35 @@ function pickEnrollments(rec: Record<string, unknown>): AdminMemberEnrollment[] 
       const row = asRecord(item);
       if (!row) continue;
       const title = pickString(row["title"], row["courseName"], row["courseTitle"], row["name"], row["shortTitle"]);
-      const courseId =
-        formatPrefixedId("CRS", row["courseId"], row["course_id"], row["id"]) || title;
+      const explicitCourseId = formatPrefixedId("CRS", row["courseId"], row["course_id"]);
+      const rowId = pickString(row["id"]);
+      const courseId = explicitCourseId || formatPrefixedId("CRS", rowId) || title;
       if (!courseId) continue;
-      const paid = Number(row["paid"] ?? row["amount"] ?? row["fee"] ?? row["price"] ?? 0) || 0;
+      const paid = pickNumber(row["paid"], row["amount"]);
+      const shortTitle = pickString(row["shortTitle"], row["short_title"]);
+      const paymentType = pickPaymentType(row["paymentType"], row["payment_type"]);
+      const paymentStatus = pickPaymentStatus(row["paymentStatus"], row["payment_status"]);
+      const subscriptionId = pickString(row["subscriptionId"], row["subscription_id"]) || (explicitCourseId ? rowId : "");
+      const coursePrice = row["coursePrice"] ?? row["course_price"] ?? row["fee"];
+      const remaining = row["remainingAmount"] ?? row["remaining_amount"];
+      const subscriptionStatus = pickString(row["status"]);
       out.push({
         courseId,
         title: title || courseId,
-        shortTitle: pickString(row["shortTitle"], row["short_title"]) || undefined,
         paid,
+        ...(shortTitle ? { shortTitle } : {}),
+        ...(paymentType ? { paymentType } : {}),
+        ...(paymentStatus ? { paymentStatus } : {}),
+        ...(subscriptionId ? { subscriptionId } : {}),
+        ...(coursePrice !== undefined && coursePrice !== null && coursePrice !== ""
+          ? { coursePrice: pickNumber(coursePrice) }
+          : {}),
+        ...(remaining !== undefined && remaining !== null && remaining !== ""
+          ? { remainingAmount: pickNumber(remaining) }
+          : {}),
+        ...(subscriptionStatus && subscriptionStatus !== paymentStatus
+          ? { subscriptionStatus }
+          : {}),
       });
     }
   }
@@ -179,6 +217,10 @@ function pickMember(raw: unknown): AdminMember | null {
   const name = pickString(user["name"], user["fullName"], user["username"]) || "Aspirant";
   if (!id && !phone && name === "Aspirant") return null;
   const roleRaw = pickString(user["role"], rec["role"]).toUpperCase();
+  const enrollments = pickEnrollments(user);
+  const paymentStatus = pickPaymentStatus(user["paymentStatus"], rec["paymentStatus"]);
+  const paymentType = pickPaymentType(user["paymentType"], rec["paymentType"]);
+  const email = pickString(user["email"], rec["email"]);
   return {
     id: id || phone || name,
     studentId: studentId || id || phone || name,
@@ -186,7 +228,12 @@ function pickMember(raw: unknown): AdminMember | null {
     phone: phone || "—",
     role: roleRaw || "STUDENT",
     createdAt: pickCreatedAt(user) || pickCreatedAt(rec),
-    enrollments: pickEnrollments(user),
+    enrollments: enrollments.map((row) => ({
+      ...row,
+      ...(row.paymentStatus ? {} : paymentStatus ? { paymentStatus } : {}),
+      ...(row.paymentType ? {} : paymentType ? { paymentType } : {}),
+    })),
+    ...(email ? { email } : {}),
   };
 }
 
@@ -325,7 +372,7 @@ async function sendFile(path: string, method: "POST" | "PUT", file: File, fallba
 
   const token = typeof window === "undefined" ? null : readAuthToken();
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const res = await fetch(apiUrl(path), { method, cache: "no-store", headers, body: form });
   const payload = await readBody(res);
@@ -347,13 +394,34 @@ async function postJson(path: string, payload: unknown, fallbackError: string) {
   );
 }
 
+async function putJson(path: string, payload: unknown, fallbackError: string) {
+  return request(
+    path,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    fallbackError,
+  );
+}
+
 export type MemberListKind = "subscribed" | "non-subscribed";
+
+export type PaymentType = "UPI" | "CASH";
+export type PaymentStatus = "PAID" | "NOT_PAID" | "PARTIAL";
 
 export type AdminMemberEnrollment = {
   courseId: string;
   title: string;
   shortTitle?: string;
   paid: number;
+  paymentType?: PaymentType;
+  paymentStatus?: PaymentStatus;
+  subscriptionId?: string;
+  coursePrice?: number;
+  remainingAmount?: number;
+  subscriptionStatus?: string;
 };
 
 export type AdminMember = {
@@ -361,6 +429,7 @@ export type AdminMember = {
   studentId: string;
   name: string;
   phone: string;
+  email?: string;
   role: string;
   createdAt: string;
   enrollments: AdminMemberEnrollment[];
@@ -402,8 +471,15 @@ export type CreateAdminSubscriptionInput = {
   studentId: string;
   courseId: string;
   expiresAt: string | null;
-  paymentType: "UPI" | "CASH";
-  paymentStatus: "PAID" | "NOT_PAID" | "PARTIAL";
+  paymentType: PaymentType;
+  paymentStatus: PaymentStatus;
+  amount: number;
+};
+
+export type UpdateAdminSubscriptionPaymentInput = {
+  subscriptionId: string;
+  paymentType: PaymentType;
+  paymentStatus: PaymentStatus;
   amount: number;
 };
 
@@ -723,6 +799,18 @@ export async function createAdminSubscription(input: CreateAdminSubscriptionInpu
       amount: input.amount,
     },
     "Could not add this subscription.",
+  );
+}
+
+export async function updateAdminSubscriptionPayment(input: UpdateAdminSubscriptionPaymentInput) {
+  return putJson(
+    `/api/admin/subscriptions/${encodeURIComponent(input.subscriptionId)}/payment`,
+    {
+      paymentType: input.paymentType,
+      amount: input.amount,
+      paymentStatus: input.paymentStatus,
+    },
+    "Could not update this payment.",
   );
 }
 
