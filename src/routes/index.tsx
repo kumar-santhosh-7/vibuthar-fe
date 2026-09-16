@@ -92,7 +92,7 @@ function Landing() {
             initial={{ opacity: 0, scale: 0.97, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             transition={{ duration: 1, ease: [0.22, 1, 0.36, 1] }}
-            className="relative aspect-[4/4] overflow-hidden rounded-[2rem] shadow-float sm:aspect-[20/9] sm:rounded-[2.5rem]"
+            className="relative min-h-[34rem] overflow-hidden rounded-[2rem] shadow-float sm:aspect-[20/9] sm:min-h-0 sm:rounded-[2.5rem]"
             style={{ perspective: 1200 }}
           >
             {/* Video & Image Background Carousel */}
@@ -133,7 +133,7 @@ function Landing() {
             <div className="pointer-events-none absolute inset-0 z-10 bg-linear-to-r from-chocolate/75 via-chocolate/30 to-transparent" />
 
             {/* Dynamic Text Content (Syncs with Active Slide) */}
-            <div className="relative z-20 flex h-full flex-col justify-end p-5 sm:p-8 lg:p-10">
+            <div className="relative z-20 flex h-full flex-col justify-end p-5 pb-6 sm:p-8 lg:p-10">
               <div className="max-w-2xl">
                 <AnimatePresence mode="wait">
                   <motion.div
@@ -143,16 +143,16 @@ function Landing() {
                     exit={{ opacity: 0, y: -15 }}
                     transition={{ duration: 0.4, ease: "easeOut" }}
                   >
-                    <span className="inline-flex items-center gap-2 rounded-full border border-cream/30 bg-cream/15 px-4 py-1.5 text-xs font-semibold tracking-[0.18em] text-cream uppercase backdrop-blur-md">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-cream/30 bg-cream/15 px-3 py-1.5 text-[0.65rem] font-semibold tracking-[0.18em] text-cream uppercase backdrop-blur-md sm:px-4 sm:text-xs">
                       <Film className="h-3.5 w-3.5" /> {activeSlide.tag}
                     </span>
-                    <h1 className="mt-3 text-3xl leading-[1.08] text-cream sm:text-5xl lg:text-6xl">
+                    <h1 className="mt-3 text-[1.65rem] leading-[1.15] text-balance text-cream sm:text-5xl lg:text-6xl sm:leading-[1.08]">
                       {activeSlide.title}
                     </h1>
-                    <p className="mt-2 max-w-xl text-base font-semibold text-cream/90 text-tamil sm:text-xl">
+                    <p className="mt-2 max-w-xl text-sm font-semibold leading-snug text-cream/90 text-tamil sm:text-xl">
                       {activeSlide.titleTa}
                     </p>
-                    <p className="mt-3 max-w-xl text-sm text-cream/80 sm:text-base">
+                    <p className="mt-3 max-w-xl text-sm leading-relaxed text-cream/80 sm:text-base">
                       {activeSlide.description}
                     </p>
                     <p className="mt-1 hidden max-w-xl text-sm text-cream/75 text-tamil sm:block">
@@ -161,25 +161,25 @@ function Landing() {
                   </motion.div>
                 </AnimatePresence>
 
-                <div className="mt-5 flex flex-wrap items-center gap-3">
+                <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
                   <Link
                     to="/courses"
-                    className="group inline-flex items-center gap-2 rounded-full bg-gold-gradient px-7 py-3.5 text-sm font-semibold text-primary-foreground shadow-gold transition-transform hover:-translate-y-0.5"
+                    className="group inline-flex w-full items-center justify-center gap-2 rounded-full bg-gold-gradient px-6 py-3.5 text-sm font-semibold text-primary-foreground shadow-gold transition-transform hover:-translate-y-0.5 sm:w-auto sm:justify-start sm:px-7"
                   >
-                    <span>
+                    <span className="text-center sm:text-left">
                       Explore courses
                       <span className="block text-xs font-medium opacity-90 text-tamil">
                         பாடநெறிகளைப் பாருங்கள்
                       </span>
                     </span>
-                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                    <ArrowRight className="h-4 w-4 shrink-0 transition-transform group-hover:translate-x-1" />
                   </Link>
                   <Link
                     to="/library"
-                    className="inline-flex items-center gap-2 rounded-full border border-cream/40 bg-cream/10 px-6 py-3 text-sm font-semibold text-cream backdrop-blur-md transition-colors hover:bg-cream/20"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-cream/40 bg-cream/10 px-6 py-3 text-sm font-semibold text-cream backdrop-blur-md transition-colors hover:bg-cream/20 sm:w-auto sm:justify-start"
                   >
-                    <Play className="h-4 w-4" />
-                    <span>
+                    <Play className="h-4 w-4 shrink-0" />
+                    <span className="text-center sm:text-left">
                       Watch a class
                       <span className="block text-xs font-medium opacity-90 text-tamil">
                         வகுப்பைப் பாருங்கள்
@@ -191,7 +191,7 @@ function Landing() {
             </div>
 
             {/* Manual Slide Navigation Controls & Indicators */}
-            <div className="absolute bottom-6 right-6 z-30 flex items-center gap-3">
+            <div className="absolute top-4 right-4 z-30 flex items-center gap-3 sm:top-auto sm:right-6 sm:bottom-6">
               <div className="flex gap-1.5">
                 {heroSlides.map((_, idx) => (
                   <button

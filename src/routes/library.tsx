@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { motion, AnimatePresence } from "motion/react";
-import { useEffect, useState } from "react";
-import { Lock, Play, Search, LayoutGrid, X, Youtube } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Lock, Maximize2, Minimize2, Play, Search, LayoutGrid, X, Youtube } from "lucide-react";
 import { useAuth, type User } from "@/lib/auth";
 import { type CourseVideo, type SubscribedCourse } from "@/lib/api";
 import {
@@ -266,19 +266,90 @@ function Library({ user }: { user: User }) {
   );
 }
 
+function nativeFullscreenElement() {
+  const doc = document as Document & { webkitFullscreenElement?: Element | null };
+  return document.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+}
+
+async function exitNativeFullscreen() {
+  const doc = document as Document & { webkitExitFullscreen?: () => Promise<void> | void };
+  if (!nativeFullscreenElement()) return;
+  if (document.exitFullscreen) {
+    await document.exitFullscreen();
+    return;
+  }
+  await doc.webkitExitFullscreen?.();
+}
+
 function VideoPlayer({ video, onClose }: { video: LibraryVideo | null; onClose: () => void }) {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [fullMode, setFullMode] = useState(false);
+
   useEffect(() => {
-    if (!video) return;
+    if (!video) {
+      setFullMode(false);
+      void exitNativeFullscreen();
+      return;
+    }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (fullMode) {
+        e.preventDefault();
+        void exitNativeFullscreen();
+        setFullMode(false);
+        return;
+      }
+      onClose();
+    };
+    const onFs = () => {
+      if (nativeFullscreenElement()) setFullMode(true);
     };
     document.addEventListener("keydown", onKey);
+    document.addEventListener("fullscreenchange", onFs);
+    document.addEventListener("webkitfullscreenchange", onFs);
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
+      document.removeEventListener("fullscreenchange", onFs);
+      document.removeEventListener("webkitfullscreenchange", onFs);
       document.body.style.overflow = "";
     };
-  }, [video, onClose]);
+  }, [video, onClose, fullMode]);
+
+  async function toggleFullMode() {
+    const el = stageRef.current as
+      | (HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> | void })
+      | null;
+    if (!el) return;
+
+    if (fullMode) {
+      await exitNativeFullscreen();
+      setFullMode(false);
+      return;
+    }
+
+    try {
+      if (el.requestFullscreen) {
+        await el.requestFullscreen();
+        setFullMode(true);
+        return;
+      }
+      if (el.webkitRequestFullscreen) {
+        await el.webkitRequestFullscreen();
+        setFullMode(true);
+        return;
+      }
+    } catch {
+      // iOS and some Android WebViews block element fullscreen; use in-page full mode.
+    }
+    setFullMode((open) => !open);
+  }
+
+  async function closePlayer() {
+    await exitNativeFullscreen();
+    setFullMode(false);
+    onClose();
+  }
 
   return (
     <AnimatePresence>
@@ -287,11 +358,14 @@ function VideoPlayer({ video, onClose }: { video: LibraryVideo | null; onClose: 
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          onClick={onClose}
+          onClick={closePlayer}
           role="dialog"
           aria-modal="true"
           aria-label={video.title}
-          className="fixed inset-0 z-100 flex items-center justify-center bg-chocolate/80 p-4 backdrop-blur-sm sm:p-8"
+          className={cn(
+            "fixed inset-0 z-100 flex items-center justify-center bg-chocolate/80 backdrop-blur-sm",
+            fullMode ? "p-0" : "p-4 sm:p-8",
+          )}
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.96, y: 12 }}
@@ -300,9 +374,20 @@ function VideoPlayer({ video, onClose }: { video: LibraryVideo | null; onClose: 
             transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
             onClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
-            className="w-full max-w-4xl overflow-hidden rounded-3xl bg-card shadow-float select-none"
+            className={cn(
+              "relative overflow-hidden bg-card shadow-float select-none",
+              fullMode
+                ? "flex h-dvh w-dvw max-w-none flex-col rounded-none"
+                : "w-full max-w-4xl rounded-3xl",
+            )}
           >
-            <div className="relative aspect-video w-full overflow-hidden bg-chocolate">
+            <div
+              ref={stageRef}
+              className={cn(
+                "relative overflow-hidden bg-chocolate",
+                fullMode ? "min-h-0 flex-1" : "aspect-video w-full",
+              )}
+            >
               <iframe
                 key={video.key}
                 src={video.youtubeId ? youtubeEmbed(video.youtubeId) : video.videoUrl}
@@ -312,25 +397,49 @@ function VideoPlayer({ video, onClose }: { video: LibraryVideo | null; onClose: 
                 sandbox="allow-scripts allow-same-origin allow-presentation"
                 className="pointer-events-auto h-full w-full"
               />
-              {/* Cover YouTube title/link (top) and logo (bottom-right) so they cannot open youtube.com */}
-              <div aria-hidden className="absolute inset-x-0 top-0 z-10 h-14" />
-              <div aria-hidden className="absolute right-0 bottom-0 z-10 h-[4.5rem] w-32" />
-            </div>
-            <div className="flex items-start justify-between gap-4 p-5">
-              <div className="min-w-0">
-                <h2 className="text-base leading-snug font-semibold">{video.title}</h2>
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  For enrolled Vibuthar students only. Please do not share or re-upload.
-                </p>
-              </div>
+              {/* Cover YouTube title, download, overflow menu, and logo so they cannot open youtube.com */}
+              <div aria-hidden className="pointer-events-auto absolute inset-x-0 top-0 z-10 h-12 bg-chocolate sm:h-14" />
+              <div
+                aria-hidden
+                className="pointer-events-auto absolute top-0 right-0 z-20 h-16 w-16 bg-chocolate sm:h-14 sm:w-14"
+              />
+              <div aria-hidden className="pointer-events-auto absolute right-0 bottom-0 z-10 h-[4.5rem] w-32 bg-chocolate" />
+              {fullMode ? (
+                <button
+                  type="button"
+                  onClick={closePlayer}
+                  aria-label="Close player"
+                  className="absolute top-3 left-3 z-30 rounded-full border border-cream/20 bg-chocolate/90 p-2 text-cream"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              ) : null}
               <button
-                onClick={onClose}
-                aria-label="Close player"
-                className="shrink-0 rounded-full border border-border p-2 transition-colors hover:bg-secondary"
+                type="button"
+                onClick={toggleFullMode}
+                aria-label={fullMode ? "Exit full screen" : "Watch in full screen"}
+                className="absolute right-3 bottom-3 z-30 rounded-full border border-cream/20 bg-chocolate/90 p-2.5 text-cream shadow-float transition-colors hover:bg-chocolate"
               >
-                <X className="h-4 w-4" />
+                {fullMode ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
               </button>
             </div>
+            {!fullMode ? (
+              <div className="flex items-start justify-between gap-4 p-5">
+                <div className="min-w-0">
+                  <h2 className="text-base leading-snug font-semibold">{video.title}</h2>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    For enrolled Vibuthar students only. Please do not share or re-upload.
+                  </p>
+                </div>
+                <button
+                  onClick={closePlayer}
+                  aria-label="Close player"
+                  className="shrink-0 rounded-full border border-border p-2 transition-colors hover:bg-secondary"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ) : null}
           </motion.div>
         </motion.div>
       )}

@@ -265,6 +265,7 @@ function pickCourse(raw: unknown): AdminCourse | null {
     price: pickNumber(course["price"], course["fee"], course["amount"]),
     status: pickString(course["status"]) || "ACTIVE",
     thumbnailUrl: mediaUrl(pickString(course["thumbnailUrl"], rec["thumbnailUrl"])),
+    videos: pickCourseVideos(course),
   };
 }
 
@@ -448,6 +449,7 @@ export type AdminCourse = {
   price: number;
   status: string;
   thumbnailUrl: string;
+  videos: CourseVideo[];
 };
 
 export type AdminBanner = {

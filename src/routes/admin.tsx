@@ -1,10 +1,11 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Image as ImageIcon, BarChart3, BookOpen, ChevronLeft, ChevronRight, Eye, ImagePlus, Pencil, Plus, Trash2, Users, Video, X } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode, Fragment } from "react";
+import { Image as ImageIcon, BarChart3, BookOpen, ChevronDown, ChevronLeft, ChevronRight, Eye, ImagePlus, Pencil, Plus, Trash2, Users, Video, X } from "lucide-react";
 import { BANNER_IMAGE, COURSE_THUMBNAIL, assertBannerFile, assertCourseThumbnailFile } from "@/lib/banner-image";
 import { addCourse, useCourses } from "@/lib/catalog";
 import { formatPrice } from "@/lib/directory";
 import { createAdminCourseVideo, createAdminSubscription, deleteAdminImage, listAdminMembers, listAdminPaidAmount, listAdminSubscriptionStats, listPublicImages, registerAccount, updateAdminImage, updateAdminSubscriptionPayment, uploadAdminImage, type AdminCourse, type AdminImage, type AdminMember, type MemberListKind, type PaymentStatus, type PaymentType } from "@/lib/api";
+import { formatLectureDuration } from "@/data/content";
 import { homeFor, isValidPhone, normalizePhone, useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -1042,6 +1043,7 @@ function CoursePanel() {
   const [durationMinutes, setDurationMinutes] = useState("");
   const [videoError, setVideoError] = useState("");
   const [videoPending, setVideoPending] = useState(false);
+  const [openCourseId, setOpenCourseId] = useState<string | null>(null);
 
   function resetForm() {
     setTitle("");
@@ -1107,6 +1109,7 @@ function CoursePanel() {
       });
       toast.success("Video saved successfully.");
       closeVideoModal();
+      await reload();
     } catch (err) {
       setVideoError(err instanceof Error ? err.message : "Could not add this video.");
     } finally {
@@ -1192,73 +1195,129 @@ function CoursePanel() {
         <table className="w-full min-w-[44rem] text-left text-sm">
           <thead className="border-b border-border bg-secondary/60 text-xs tracking-[0.12em] text-muted-foreground uppercase">
             <tr>
+              <th className="w-10 px-4 py-3 font-semibold"></th>
               <th className="px-6 py-3 font-semibold">Thumb</th>
               <th className="px-6 py-3 font-semibold">Course</th>
               <th className="px-6 py-3 font-semibold">Status</th>
               <th className="px-6 py-3 font-semibold">Duration</th>
               <th className="px-6 py-3 font-semibold">Price</th>
+              <th className="px-6 py-3 font-semibold">Videos</th>
               <th className="px-6 py-3 font-semibold">Video</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-6 py-10 text-center text-muted-foreground">
+                <td colSpan={8} className="px-6 py-10 text-center text-muted-foreground">
                   Loading courses…
                 </td>
               </tr>
             ) : loadError ? (
               <tr>
-                <td colSpan={6} className="px-6 py-10 text-center text-destructive">
+                <td colSpan={8} className="px-6 py-10 text-center text-destructive">
                   {loadError}
                 </td>
               </tr>
             ) : slice.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-10 text-center text-muted-foreground">
+                <td colSpan={8} className="px-6 py-10 text-center text-muted-foreground">
                   No courses yet.
                 </td>
               </tr>
             ) : (
-              slice.map((course) => (
-                <tr key={course.id} className="hover:bg-secondary/40">
-                  <td className="px-6 py-4">
-                    {course.thumbnailUrl ? (
-                      <img
-                        src={course.thumbnailUrl}
-                        alt=""
-                        className="h-10 w-16 rounded-md object-cover"
-                      />
-                    ) : (
-                      <div className="h-10 w-16 rounded-md bg-secondary" />
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="font-semibold text-chocolate">{course.title}</p>
-                    <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                      {course.description}
-                    </p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="rounded-full bg-secondary px-3 py-1 text-xs font-semibold tracking-wide uppercase">
-                      {course.status || "ACTIVE"}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-muted-foreground">
-                    {course.durationHours ? `${course.durationHours} hours` : "—"}
-                  </td>
-                  <td className="px-6 py-4 font-semibold">{formatPrice(course.price)}</td>
-                  <td className="px-6 py-4">
-                    <button
-                      type="button"
-                      onClick={() => openVideoModal(course)}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-chocolate transition-colors hover:bg-secondary"
-                    >
-                      <Video className="h-3.5 w-3.5" /> Add video
-                    </button>
-                  </td>
-                </tr>
-              ))
+              slice.map((course) => {
+                const videos = course.videos ?? [];
+                const expanded = openCourseId === course.id;
+                return (
+                  <Fragment key={course.id}>
+                    <tr className="hover:bg-secondary/40">
+                      <td className="px-4 py-4">
+                        <button
+                          type="button"
+                          onClick={() => setOpenCourseId(expanded ? null : course.id)}
+                          aria-expanded={expanded}
+                          aria-label={expanded ? `Hide videos for ${course.title}` : `Show videos for ${course.title}`}
+                          className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-chocolate"
+                        >
+                          <ChevronDown className={cn("h-4 w-4 transition-transform", expanded ? "rotate-180" : "")} />
+                        </button>
+                      </td>
+                      <td className="px-6 py-4">
+                        {course.thumbnailUrl ? (
+                          <img
+                            src={course.thumbnailUrl}
+                            alt=""
+                            className="h-10 w-16 rounded-md object-cover"
+                          />
+                        ) : (
+                          <div className="h-10 w-16 rounded-md bg-secondary" />
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="font-semibold text-chocolate">{course.title}</p>
+                        <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                          {course.description}
+                        </p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="rounded-full bg-secondary px-3 py-1 text-xs font-semibold tracking-wide uppercase">
+                          {course.status || "ACTIVE"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-muted-foreground">
+                        {course.durationHours ? `${course.durationHours} hours` : "—"}
+                      </td>
+                      <td className="px-6 py-4 font-semibold">{formatPrice(course.price)}</td>
+                      <td className="px-6 py-4 text-muted-foreground">
+                        {videos.length} {videos.length === 1 ? "video" : "videos"}
+                      </td>
+                      <td className="px-6 py-4">
+                        <button
+                          type="button"
+                          onClick={() => openVideoModal(course)}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-chocolate transition-colors hover:bg-secondary"
+                        >
+                          <Video className="h-3.5 w-3.5" /> Add video
+                        </button>
+                      </td>
+                    </tr>
+                    {expanded ? (
+                      <tr className="bg-secondary/30">
+                        <td colSpan={8} className="px-6 py-4">
+                          {videos.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">No videos on this course yet.</p>
+                          ) : (
+                            <table className="w-full min-w-[32rem] text-left text-sm">
+                              <thead className="text-xs tracking-[0.12em] text-muted-foreground uppercase">
+                                <tr>
+                                  <th className="py-2 pr-4 font-semibold">#</th>
+                                  <th className="py-2 pr-4 font-semibold">Title</th>
+                                  <th className="py-2 pr-4 font-semibold">Duration</th>
+                                  <th className="py-2 font-semibold">URL</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-border">
+                                {videos.map((video) => (
+                                  <tr key={video.id}>
+                                    <td className="py-2 pr-4 text-muted-foreground">{video.sortOrder || "—"}</td>
+                                    <td className="py-2 pr-4 font-medium text-chocolate">{video.title}</td>
+                                    <td className="py-2 pr-4 text-muted-foreground">
+                                      {formatLectureDuration(video.durationMinutes) || "—"}
+                                    </td>
+                                    <td className="max-w-[18rem] truncate py-2 font-mono text-xs text-muted-foreground">
+                                      {video.videoUrl || "—"}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
+              })
             )}
           </tbody>
         </table>

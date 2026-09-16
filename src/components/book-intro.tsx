@@ -216,7 +216,7 @@ function CoverFront() {
         <h2 className="mt-5 font-serif text-2xl tracking-[0.18em] text-cream uppercase sm:text-3xl">
           Vibuthar
         </h2>
-        <p className="mt-1 text-sm font-medium text-gold/90 text-tamil">விபுத்தர்</p>
+        <p className="mt-1 text-sm font-medium text-gold/90 text-tamil">விபுதர்</p>
         <span className="mx-auto mt-4 block h-px w-12 bg-gold/50" />
         <p className="mt-4 text-[10px] font-semibold tracking-[0.28em] text-cream/70 uppercase">
           Academy
@@ -275,7 +275,7 @@ function TitlePage() {
         V
       </span>
       <h2 className="mt-4 font-serif text-2xl text-chocolate sm:text-3xl">Vibuthar</h2>
-      <p className="mt-1 text-sm font-medium text-chocolate text-tamil">விபுத்தர் அகாடமி</p>
+      <p className="mt-1 text-sm font-medium text-chocolate text-tamil">விபுதர்</p>
       <span className="my-4 block h-px w-10 bg-gold/50" />
       <p className="max-w-[16ch] font-serif text-sm leading-snug text-chocolate/80 sm:text-base">
         The quiet craft of becoming a civil servant.
