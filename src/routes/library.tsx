@@ -363,8 +363,8 @@ function VideoPlayer({ video, onClose }: { video: LibraryVideo | null; onClose: 
           aria-modal="true"
           aria-label={video.title}
           className={cn(
-            "fixed inset-0 z-100 flex items-center justify-center bg-chocolate/80 backdrop-blur-sm",
-            fullMode ? "p-0" : "p-4 sm:p-8",
+            "fixed inset-0 z-100 flex items-center justify-center",
+            fullMode ? "bg-black p-0" : "bg-chocolate/80 p-4 backdrop-blur-sm sm:p-8",
           )}
         >
           <motion.div
@@ -375,16 +375,16 @@ function VideoPlayer({ video, onClose }: { video: LibraryVideo | null; onClose: 
             onClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
             className={cn(
-              "relative overflow-hidden bg-card shadow-float select-none",
+              "relative overflow-hidden select-none",
               fullMode
-                ? "flex h-dvh w-dvw max-w-none flex-col rounded-none"
-                : "w-full max-w-4xl rounded-3xl",
+                ? "flex h-dvh w-dvw max-w-none flex-col rounded-none bg-black"
+                : "w-full max-w-4xl rounded-3xl bg-card shadow-float",
             )}
           >
             <div
               ref={stageRef}
               className={cn(
-                "relative overflow-hidden bg-chocolate",
+                "relative overflow-hidden bg-transparent",
                 fullMode ? "min-h-0 flex-1" : "aspect-video w-full",
               )}
             >
@@ -397,19 +397,12 @@ function VideoPlayer({ video, onClose }: { video: LibraryVideo | null; onClose: 
                 sandbox="allow-scripts allow-same-origin allow-presentation"
                 className="pointer-events-auto h-full w-full"
               />
-              {/* Cover YouTube title, download, overflow menu, and logo so they cannot open youtube.com */}
-              <div aria-hidden className="pointer-events-auto absolute inset-x-0 top-0 z-10 h-12 bg-chocolate sm:h-14" />
-              <div
-                aria-hidden
-                className="pointer-events-auto absolute top-0 right-0 z-20 h-16 w-16 bg-chocolate sm:h-14 sm:w-14"
-              />
-              <div aria-hidden className="pointer-events-auto absolute right-0 bottom-0 z-10 h-[4.5rem] w-32 bg-chocolate" />
               {fullMode ? (
                 <button
                   type="button"
                   onClick={closePlayer}
                   aria-label="Close player"
-                  className="absolute top-3 left-3 z-30 rounded-full border border-cream/20 bg-chocolate/90 p-2 text-cream"
+                  className="absolute top-3 left-3 z-30 bg-transparent p-2 text-white"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -418,9 +411,9 @@ function VideoPlayer({ video, onClose }: { video: LibraryVideo | null; onClose: 
                 type="button"
                 onClick={toggleFullMode}
                 aria-label={fullMode ? "Exit full screen" : "Watch in full screen"}
-                className="absolute right-3 bottom-3 z-30 rounded-full border border-cream/20 bg-chocolate/90 p-2.5 text-cream shadow-float transition-colors hover:bg-chocolate"
+                className="absolute right-3 bottom-3 z-30 flex h-11 w-11 items-center justify-center rounded-full border-2 border-white/90 bg-black/30 text-white shadow-[0_6px_18px_rgba(0,0,0,0.35)] backdrop-blur-sm"
               >
-                {fullMode ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                {fullMode ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
               </button>
             </div>
             {!fullMode ? (
