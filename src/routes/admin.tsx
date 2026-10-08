@@ -4,7 +4,7 @@ import { Image as ImageIcon, BarChart3, BookOpen, ChevronDown, ChevronLeft, Chev
 import { BANNER_IMAGE, COURSE_THUMBNAIL, assertBannerFile, assertCourseThumbnailFile } from "@/lib/banner-image";
 import { addCourse, useCourses } from "@/lib/catalog";
 import { formatPrice } from "@/lib/directory";
-import { createAdminCourseVideo, createAdminSubscription, deleteAdminImage, listAdminMembers, listAdminPaidAmount, listAdminSubscriptionStats, listPublicImages, registerAccount, updateAdminImage, updateAdminSubscriptionPayment, uploadAdminImage, type AdminCourse, type AdminImage, type AdminMember, type MemberListKind, type PaymentStatus, type PaymentType } from "@/lib/api";
+import { createAdminCourseVideo, createAdminSubscription, deleteAdminCourseVideo, deleteAdminImage, deleteAdminUser, listAdminMembers, listAdminPaidAmount, listAdminSubscriptionStats, listPublicImages, registerAccount, updateAdminImage, updateAdminSubscriptionPayment, uploadAdminImage, type AdminCourse, type AdminImage, type AdminMember, type CourseVideo, type MemberListKind, type PaymentStatus, type PaymentType } from "@/lib/api";
 import { formatLectureDuration } from "@/data/content";
 import { homeFor, isValidPhone, normalizePhone, useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -366,6 +366,9 @@ function UserPanel() {
   const [viewing, setViewing] = useState<AdminMember | null>(null);
   const [subscribing, setSubscribing] = useState<AdminMember | null>(null);
   const [updating, setUpdating] = useState<AdminMember | null>(null);
+  const [deleting, setDeleting] = useState<AdminMember | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [subscriptionId, setSubscriptionId] = useState("");
   const [courseId, setCourseId] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
@@ -536,6 +539,25 @@ function UserPanel() {
     }
   }
 
+  async function onDeleteUser() {
+    if (!deleting) return;
+    setDeleteError("");
+    setDeletePending(true);
+    try {
+      await deleteAdminUser(deleting.userId || deleting.id);
+      toast.success("User deleted successfully.");
+      setDeleting(null);
+      if (viewing?.id === deleting.id) setViewing(null);
+      if (subscribing?.id === deleting.id) setSubscribing(null);
+      if (updating?.id === deleting.id) setUpdating(null);
+      await loadMembers({ silent: true });
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Could not delete this user.");
+    } finally {
+      setDeletePending(false);
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (name.trim().length < 2) {
@@ -640,24 +662,25 @@ function UserPanel() {
                 </>
               )}
               <th className="px-6 py-3 font-semibold">View</th>
+              <th className="px-6 py-3 font-semibold">Delete</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {loading ? (
               <tr>
-                <td colSpan={tab === "non-subscribed" ? 5 : 6} className="px-6 py-10 text-center text-muted-foreground">
+                <td colSpan={tab === "non-subscribed" ? 6 : 7} className="px-6 py-10 text-center text-muted-foreground">
                   Loading members…
                 </td>
               </tr>
             ) : loadError ? (
               <tr>
-                <td colSpan={tab === "non-subscribed" ? 5 : 6} className="px-6 py-10 text-center text-destructive">
+                <td colSpan={tab === "non-subscribed" ? 6 : 7} className="px-6 py-10 text-center text-destructive">
                   {loadError}
                 </td>
               </tr>
             ) : slice.length === 0 ? (
               <tr>
-                <td colSpan={tab === "non-subscribed" ? 5 : 6} className="px-6 py-10 text-center text-muted-foreground">
+                <td colSpan={tab === "non-subscribed" ? 6 : 7} className="px-6 py-10 text-center text-muted-foreground">
                   {tab === "subscribed"
                     ? "No subscribed users yet."
                     : "No non-subscribed users yet."}
@@ -723,6 +746,19 @@ function UserPanel() {
                       aria-label={`View courses for ${user.name}`}
                     >
                       <Eye className="h-4 w-4" />
+                    </button>
+                  </td>
+                  <td className="px-6 py-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeleteError("");
+                        setDeleting(user);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-destructive transition-colors hover:bg-secondary"
+                      aria-label={`Delete ${user.name}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Delete
                     </button>
                   </td>
                 </tr>
@@ -1019,6 +1055,47 @@ function UserPanel() {
           </div>
         )}
       </AdminModal>
+
+      <AdminModal
+        open={Boolean(deleting)}
+        title="Delete user"
+        onClose={() => {
+          if (deletePending) return;
+          setDeleting(null);
+          setDeleteError("");
+        }}
+      >
+        {deleting ? (
+          <div className="grid gap-4">
+            <p className="text-sm text-muted-foreground">
+              Delete <span className="font-semibold text-chocolate">{deleting.name}</span>
+              {deleting.phone && deleting.phone !== "—" ? ` (${deleting.phone})` : ""}? This cannot be undone.
+            </p>
+            {deleteError ? <p className="text-sm text-destructive">{deleteError}</p> : null}
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                disabled={deletePending}
+                onClick={() => {
+                  setDeleting(null);
+                  setDeleteError("");
+                }}
+                className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold transition-colors hover:bg-secondary disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deletePending}
+                onClick={() => void onDeleteUser()}
+                className="rounded-full bg-destructive px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {deletePending ? "Deleting…" : "Delete user"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </AdminModal>
     </section>
   );
 }
@@ -1044,6 +1121,9 @@ function CoursePanel() {
   const [videoError, setVideoError] = useState("");
   const [videoPending, setVideoPending] = useState(false);
   const [openCourseId, setOpenCourseId] = useState<string | null>(null);
+  const [deletingVideo, setDeletingVideo] = useState<{ course: AdminCourse; video: CourseVideo } | null>(null);
+  const [deleteVideoPending, setDeleteVideoPending] = useState(false);
+  const [deleteVideoError, setDeleteVideoError] = useState("");
 
   function resetForm() {
     setTitle("");
@@ -1074,6 +1154,22 @@ function CoursePanel() {
     setVideoCourse(null);
     resetVideoForm();
     setVideoPending(false);
+  }
+
+  async function onDeleteVideo() {
+    if (!deletingVideo) return;
+    setDeleteVideoError("");
+    setDeleteVideoPending(true);
+    try {
+      await deleteAdminCourseVideo(deletingVideo.course.id, deletingVideo.video.id);
+      toast.success("Video deleted successfully.");
+      setDeletingVideo(null);
+      await reload();
+    } catch (err) {
+      setDeleteVideoError(err instanceof Error ? err.message : "Could not delete this video.");
+    } finally {
+      setDeleteVideoPending(false);
+    }
   }
 
   async function onAddVideo(e: React.FormEvent) {
@@ -1293,7 +1389,8 @@ function CoursePanel() {
                                   <th className="py-2 pr-4 font-semibold">#</th>
                                   <th className="py-2 pr-4 font-semibold">Title</th>
                                   <th className="py-2 pr-4 font-semibold">Duration</th>
-                                  <th className="py-2 font-semibold">URL</th>
+                                  <th className="py-2 pr-4 font-semibold">URL</th>
+                                  <th className="py-2 font-semibold">Action</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-border">
@@ -1304,8 +1401,20 @@ function CoursePanel() {
                                     <td className="py-2 pr-4 text-muted-foreground">
                                       {formatLectureDuration(video.durationMinutes) || "—"}
                                     </td>
-                                    <td className="max-w-[18rem] truncate py-2 font-mono text-xs text-muted-foreground">
+                                    <td className="max-w-[18rem] truncate py-2 pr-4 font-mono text-xs text-muted-foreground">
                                       {video.videoUrl || "—"}
+                                    </td>
+                                    <td className="py-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setDeleteVideoError("");
+                                          setDeletingVideo({ course, video });
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-destructive transition-colors hover:bg-background"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                                      </button>
                                     </td>
                                   </tr>
                                 ))}
@@ -1506,6 +1615,47 @@ function CoursePanel() {
             </button>
           </form>
         )}
+      </AdminModal>
+
+      <AdminModal
+        open={Boolean(deletingVideo)}
+        title="Delete video"
+        onClose={() => {
+          if (deleteVideoPending) return;
+          setDeletingVideo(null);
+          setDeleteVideoError("");
+        }}
+      >
+        {deletingVideo ? (
+          <div className="grid gap-4">
+            <p className="text-sm text-muted-foreground">
+              Delete <span className="font-semibold text-chocolate">{deletingVideo.video.title}</span> from{" "}
+              {deletingVideo.course.title}? This cannot be undone.
+            </p>
+            {deleteVideoError ? <p className="text-sm text-destructive">{deleteVideoError}</p> : null}
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                disabled={deleteVideoPending}
+                onClick={() => {
+                  setDeletingVideo(null);
+                  setDeleteVideoError("");
+                }}
+                className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold transition-colors hover:bg-secondary disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteVideoPending}
+                onClick={() => void onDeleteVideo()}
+                className="rounded-full bg-destructive px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {deleteVideoPending ? "Deleting…" : "Delete video"}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </AdminModal>
     </section>
   );

@@ -204,6 +204,7 @@ function pickMember(raw: unknown): AdminMember | null {
     user["phoneNumber"],
     user["identifier"],
   ).replace(/\D/g, "").slice(-10);
+  const rawUserId = pickString(user["userId"], rec["userId"], user["id"], rec["id"]);
   const studentId = formatPrefixedId(
     "STU",
     user["userId"],
@@ -213,7 +214,7 @@ function pickMember(raw: unknown): AdminMember | null {
     user["id"],
     rec["id"],
   );
-  const id = studentId || pickString(user["id"], rec["id"], phone);
+  const id = studentId || rawUserId || pickString(phone);
   const name = pickString(user["name"], user["fullName"], user["username"]) || "Aspirant";
   if (!id && !phone && name === "Aspirant") return null;
   const roleRaw = pickString(user["role"], rec["role"]).toUpperCase();
@@ -222,8 +223,9 @@ function pickMember(raw: unknown): AdminMember | null {
   const paymentType = pickPaymentType(user["paymentType"], rec["paymentType"]);
   const email = pickString(user["email"], rec["email"]);
   return {
-    id: id || phone || name,
-    studentId: studentId || id || phone || name,
+    id: id || rawUserId || phone || name,
+    userId: rawUserId || id || phone || name,
+    studentId: studentId || rawUserId || id || phone || name,
     name,
     phone: phone || "—",
     role: roleRaw || "STUDENT",
@@ -432,6 +434,7 @@ export type AdminMemberEnrollment = {
 
 export type AdminMember = {
   id: string;
+  userId: string;
   studentId: string;
   name: string;
   phone: string;
@@ -557,7 +560,7 @@ function pickCourseVideos(row: Record<string, unknown>): CourseVideo[] {
     const videoUrl = pickString(video["videoUrl"], video["video_url"], video["url"]);
     if (!title && !videoUrl) continue;
     out.push({
-      id: pickString(video["id"]) || videoUrl || title,
+      id: pickString(video["id"], video["videoId"], video["video_id"]) || videoUrl || title,
       title: title || "Lecture",
       videoUrl,
       sortOrder: pickNumber(video["sortOrder"], video["sort_order"]) ?? 0,
@@ -879,6 +882,14 @@ export async function createAdminCourseVideo(input: CreateAdminCourseVideoInput)
   );
 }
 
+export async function deleteAdminCourseVideo(courseId: string, videoId: string) {
+  await request(
+    `/api/admin/courses/${encodeURIComponent(courseId)}/videos/${encodeURIComponent(videoId)}`,
+    { method: "DELETE" },
+    "Could not delete this video.",
+  );
+}
+
 export async function listAdminBanners() {
   const body = await request("/api/admin/banners", { method: "GET" }, "Could not load banners.");
   return pickBanners(body);
@@ -938,6 +949,14 @@ export async function updateAdminImage(imageId: string, file: File) {
     "Could not replace this image.",
   );
   return imageFromUpload(body, file);
+}
+
+export async function deleteAdminUser(userId: string) {
+  await request(
+    `/api/admin/users/${encodeURIComponent(userId)}`,
+    { method: "DELETE" },
+    "Could not delete this user.",
+  );
 }
 
 export async function deleteAdminImage(imageId: string) {
