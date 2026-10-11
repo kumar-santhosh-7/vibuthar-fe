@@ -1,10 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode, Fragment } from "react";
-import { Image as ImageIcon, BarChart3, BookOpen, ChevronDown, ChevronLeft, ChevronRight, Eye, ImagePlus, Pencil, Plus, Trash2, Users, Video, X } from "lucide-react";
+import { Image as ImageIcon, BarChart3, BookOpen, ChevronDown, ChevronLeft, ChevronRight, Download, Eye, ImagePlus, Pencil, Plus, Trash2, Upload, Users, Video, X } from "lucide-react";
 import { BANNER_IMAGE, COURSE_THUMBNAIL, assertBannerFile, assertCourseThumbnailFile } from "@/lib/banner-image";
 import { addCourse, useCourses } from "@/lib/catalog";
 import { formatPrice } from "@/lib/directory";
-import { createAdminCourseVideo, createAdminSubscription, deleteAdminCourseVideo, deleteAdminImage, deleteAdminUser, listAdminMembers, listAdminPaidAmount, listAdminSubscriptionStats, listPublicImages, registerAccount, updateAdminImage, updateAdminSubscriptionPayment, uploadAdminImage, type AdminCourse, type AdminImage, type AdminMember, type CourseVideo, type MemberListKind, type PaymentStatus, type PaymentType } from "@/lib/api";
+import { createAdminCourseVideo, createAdminSubscription, deleteAdminCourse, deleteAdminCourseVideo, deleteAdminImage, deleteAdminUser, downloadAdminUserSampleExcel, listAdminMembers, listAdminPaidAmount, listAdminSubscriptionStats, listPublicImages, registerAccount, updateAdminImage, updateAdminSubscriptionPayment, uploadAdminImage, uploadAdminUsersExcel, type AdminCourse, type AdminImage, type AdminMember, type CourseVideo, type MemberListKind, type PaymentStatus, type PaymentType } from "@/lib/api";
 import { formatLectureDuration } from "@/data/content";
 import { homeFor, isValidPhone, normalizePhone, useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -383,6 +383,11 @@ function UserPanel() {
   const [role, setRole] = useState("STUDENT");
   const [error, setError] = useState("");
   const [addPending, setAddPending] = useState(false);
+  const [samplePending, setSamplePending] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkFile, setBulkFile] = useState<File | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkError, setBulkError] = useState("");
 
   const loadMembers = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) {
@@ -568,8 +573,8 @@ function UserPanel() {
       setError("Enter a 10-digit mobile number.");
       return;
     }
-    if (password.length < 4) {
-      setError("Password must be at least 4 characters.");
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
       return;
     }
     setError("");
@@ -594,6 +599,49 @@ function UserPanel() {
     }
   }
 
+  async function onDownloadSample() {
+    setSamplePending(true);
+    try {
+      await downloadAdminUserSampleExcel();
+      toast.success("Sample Excel downloaded.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not download the sample Excel.");
+    } finally {
+      setSamplePending(false);
+    }
+  }
+
+  function closeBulkModal() {
+    setBulkOpen(false);
+    setBulkFile(null);
+    setBulkError("");
+    setBulkPending(false);
+  }
+
+  async function onBulkUpload(e: React.FormEvent) {
+    e.preventDefault();
+    if (!bulkFile) {
+      setBulkError("Choose an Excel file to upload.");
+      return;
+    }
+    setBulkError("");
+    setBulkPending(true);
+    try {
+      await uploadAdminUsersExcel(bulkFile);
+      setBulkOpen(false);
+      setBulkFile(null);
+      setBulkError("");
+      setBulkPending(false);
+      toast.success("Users uploaded successfully.");
+      setTab("non-subscribed");
+      setPage(1);
+      await loadMembers({ silent: true });
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : "Could not upload this Excel file.");
+      setBulkPending(false);
+    }
+  }
+
   return (
     <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-soft">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-5">
@@ -603,16 +651,37 @@ function UserPanel() {
             {loading ? "Loading accounts…" : `${subscribed.length + unsubscribed.length} accounts`}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            resetForm();
-            setOpen(true);
-          }}
-          className="inline-flex items-center gap-2 rounded-full bg-gold-gradient px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-gold"
-        >
-          <Plus className="h-4 w-4" /> Add user
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={samplePending}
+            onClick={() => void onDownloadSample()}
+            className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-chocolate transition-colors hover:bg-secondary disabled:opacity-60"
+          >
+            <Download className="h-4 w-4" /> {samplePending ? "Downloading…" : "Sample download"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setBulkError("");
+              setBulkFile(null);
+              setBulkOpen(true);
+            }}
+            className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-chocolate transition-colors hover:bg-secondary"
+          >
+            <Upload className="h-4 w-4" /> Bulk upload
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              resetForm();
+              setOpen(true);
+            }}
+            className="inline-flex items-center gap-2 rounded-full bg-gold-gradient px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-gold"
+          >
+            <Plus className="h-4 w-4" /> Add user
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-border px-6 py-3">
@@ -812,9 +881,11 @@ function UserPanel() {
               onChange={(e) => setPassword(e.target.value)}
               type="password"
               autoComplete="new-password"
+              minLength={8}
               className={cn(fieldClass, "mt-2")}
-              placeholder="yahya@12345"
+              placeholder="At least 8 characters"
             />
+            <span className="mt-1 block text-xs font-normal text-muted-foreground">Must be at least 8 characters.</span>
           </label>
           <label className="block text-sm font-medium">
             Role
@@ -838,6 +909,37 @@ function UserPanel() {
           </button>
         </form>
       </AdminModal>
+
+      {bulkOpen ? (
+      <AdminModal open={bulkOpen} title="Bulk upload users" onClose={closeBulkModal}>
+        <form onSubmit={onBulkUpload} className="grid gap-4">
+          <p className="text-sm text-muted-foreground">
+            Use Sample download above the list, fill in the rows, then upload that Excel here.
+          </p>
+          <label className="block text-sm font-medium">
+            Excel file
+            <input
+              type="file"
+              accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              className="mt-2 w-full rounded-full border border-border bg-background px-4 py-3 text-sm file:mr-3 file:rounded-full file:border-0 file:bg-secondary file:px-4 file:py-1.5 file:text-sm file:font-semibold"
+              onChange={(e) => {
+                setBulkFile(e.target.files?.[0] ?? null);
+                setBulkError("");
+              }}
+            />
+          </label>
+          {bulkFile ? <p className="text-xs text-muted-foreground">{bulkFile.name}</p> : null}
+          {bulkError ? <p className="text-sm text-destructive">{bulkError}</p> : null}
+          <button
+            type="submit"
+            disabled={bulkPending}
+            className="mt-1 inline-flex items-center justify-center gap-2 rounded-full bg-gold-gradient px-5 py-3 text-sm font-semibold text-primary-foreground shadow-gold disabled:pointer-events-none disabled:opacity-60"
+          >
+            {bulkPending ? "Uploading…" : "Upload Excel"}
+          </button>
+        </form>
+      </AdminModal>
+      ) : null}
 
       <AdminModal
         open={Boolean(subscribing)}
@@ -1124,6 +1226,9 @@ function CoursePanel() {
   const [deletingVideo, setDeletingVideo] = useState<{ course: AdminCourse; video: CourseVideo } | null>(null);
   const [deleteVideoPending, setDeleteVideoPending] = useState(false);
   const [deleteVideoError, setDeleteVideoError] = useState("");
+  const [deletingCourse, setDeletingCourse] = useState<AdminCourse | null>(null);
+  const [deleteCoursePending, setDeleteCoursePending] = useState(false);
+  const [deleteCourseError, setDeleteCourseError] = useState("");
 
   function resetForm() {
     setTitle("");
@@ -1169,6 +1274,24 @@ function CoursePanel() {
       setDeleteVideoError(err instanceof Error ? err.message : "Could not delete this video.");
     } finally {
       setDeleteVideoPending(false);
+    }
+  }
+
+  async function onDeleteCourse() {
+    if (!deletingCourse) return;
+    setDeleteCourseError("");
+    setDeleteCoursePending(true);
+    try {
+      await deleteAdminCourse(deletingCourse.id);
+      toast.success("Course deleted successfully.");
+      if (openCourseId === deletingCourse.id) setOpenCourseId(null);
+      if (videoCourse?.id === deletingCourse.id) closeVideoModal();
+      setDeletingCourse(null);
+      await reload();
+    } catch (err) {
+      setDeleteCourseError(err instanceof Error ? err.message : "Could not delete this course.");
+    } finally {
+      setDeleteCoursePending(false);
     }
   }
 
@@ -1299,24 +1422,25 @@ function CoursePanel() {
               <th className="px-6 py-3 font-semibold">Price</th>
               <th className="px-6 py-3 font-semibold">Videos</th>
               <th className="px-6 py-3 font-semibold">Video</th>
+              <th className="px-6 py-3 font-semibold">Delete</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {loading ? (
               <tr>
-                <td colSpan={8} className="px-6 py-10 text-center text-muted-foreground">
+                <td colSpan={9} className="px-6 py-10 text-center text-muted-foreground">
                   Loading courses…
                 </td>
               </tr>
             ) : loadError ? (
               <tr>
-                <td colSpan={8} className="px-6 py-10 text-center text-destructive">
+                <td colSpan={9} className="px-6 py-10 text-center text-destructive">
                   {loadError}
                 </td>
               </tr>
             ) : slice.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-6 py-10 text-center text-muted-foreground">
+                <td colSpan={9} className="px-6 py-10 text-center text-muted-foreground">
                   No courses yet.
                 </td>
               </tr>
@@ -1376,10 +1500,22 @@ function CoursePanel() {
                           <Video className="h-3.5 w-3.5" /> Add video
                         </button>
                       </td>
+                      <td className="px-6 py-4">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeleteCourseError("");
+                            setDeletingCourse(course);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-destructive transition-colors hover:bg-secondary"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Delete
+                        </button>
+                      </td>
                     </tr>
                     {expanded ? (
                       <tr className="bg-secondary/30">
-                        <td colSpan={8} className="px-6 py-4">
+                        <td colSpan={9} className="px-6 py-4">
                           {videos.length === 0 ? (
                             <p className="text-sm text-muted-foreground">No videos on this course yet.</p>
                           ) : (
@@ -1652,6 +1788,47 @@ function CoursePanel() {
                 className="rounded-full bg-destructive px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
               >
                 {deleteVideoPending ? "Deleting…" : "Delete video"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </AdminModal>
+
+      <AdminModal
+        open={Boolean(deletingCourse)}
+        title="Delete course"
+        onClose={() => {
+          if (deleteCoursePending) return;
+          setDeletingCourse(null);
+          setDeleteCourseError("");
+        }}
+      >
+        {deletingCourse ? (
+          <div className="grid gap-4">
+            <p className="text-sm text-muted-foreground">
+              Delete <span className="font-semibold text-chocolate">{deletingCourse.title}</span>? This cannot be
+              undone.
+            </p>
+            {deleteCourseError ? <p className="text-sm text-destructive">{deleteCourseError}</p> : null}
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                disabled={deleteCoursePending}
+                onClick={() => {
+                  setDeletingCourse(null);
+                  setDeleteCourseError("");
+                }}
+                className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold transition-colors hover:bg-secondary disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteCoursePending}
+                onClick={() => void onDeleteCourse()}
+                className="rounded-full bg-destructive px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {deleteCoursePending ? "Deleting…" : "Delete course"}
               </button>
             </div>
           </div>
