@@ -799,6 +799,49 @@ export async function listAdminMembers(kind: MemberListKind) {
   return pickMembers(body);
 }
 
+function filenameFromDisposition(header: string | null, fallback: string) {
+  if (!header) return fallback;
+  const utf = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (utf?.[1]) {
+    try {
+      return decodeURIComponent(utf[1]);
+    } catch {
+      return utf[1];
+    }
+  }
+  const quoted = /filename="([^"]+)"/i.exec(header);
+  if (quoted?.[1]) return quoted[1];
+  const plain = /filename=([^;]+)/i.exec(header);
+  return plain?.[1]?.trim() || fallback;
+}
+
+export async function downloadAdminUserSampleExcel() {
+  const token = typeof window === "undefined" ? null : readAuthToken();
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(apiUrl("/api/admin/users/sample-excel"), { method: "GET", cache: "no-store", headers });
+  if (!res.ok) {
+    const body = await readBody(res);
+    throw new ApiError(errorMessage(body, "Could not download the sample Excel."), res.status);
+  }
+  const blob = await res.blob();
+  const filename = filenameFromDisposition(res.headers.get("content-disposition"), "users-sample.xlsx");
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+}
+
+export async function uploadAdminUsersExcel(file: File) {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  return sendForm("/api/admin/users/excel", "POST", form, "Could not upload this Excel file.");
+}
+
 export async function listAdminCourses() {
   const body = await request("/api/admin/courses", { method: "GET" }, "Could not load courses.");
   return pickCourses(body);
@@ -887,6 +930,14 @@ export async function deleteAdminCourseVideo(courseId: string, videoId: string) 
     `/api/admin/courses/${encodeURIComponent(courseId)}/videos/${encodeURIComponent(videoId)}`,
     { method: "DELETE" },
     "Could not delete this video.",
+  );
+}
+
+export async function deleteAdminCourse(courseId: string) {
+  await request(
+    `/api/admin/courses/${encodeURIComponent(courseId)}`,
+    { method: "DELETE" },
+    "Could not delete this course.",
   );
 }
 
